@@ -1,9 +1,30 @@
 {
   "base_url": "https://freelance-start.com",
-  "keywords": ["データエンジニア", "MLエンジニア", "Python"],
+  "keywords": [
+    "データサイエンス",
+    "データサイエンティスト",
+    "データアナリスト",
+    "統計解析",
+    "データエンジニア",
+    "データ基盤",
+    "レイクハウス",
+    "ETL",
+    "dbt",
+    "機械学習",
+    "AIエンジニア",
+    "ディープラーニング",
+    "自然言語処理",
+    "LLM",
+    "RAG",
+    "MLOps",
+    "BIエンジニア",
+    "Tableau",
+    "PowerBI",
+    "Looker"
+  ],
   "prefecture": "13",
-  "max_pages": 2,
-  "max_details": 5,
+  "max_pages": 0,
+  "max_details": 0,
   "request_delay_sec": {
     "min": 2.0,
     "max": 4.0
