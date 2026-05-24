@@ -2,10 +2,15 @@
   "base_url": "https://freelance-start.com",
   "keywords": ["データエンジニア", "MLエンジニア", "Python"],
   "prefecture": "13",
-  "max_pages": 5,
-  "output_dir": "/app/output",
+  "max_pages": 2,
+  "max_details": 5,
   "request_delay_sec": {
     "min": 2.0,
     "max": 4.0
+  },
+  "storage": {
+    "urls":    { "type": "local", "path": "/app/output/urls" },
+    "details": { "type": "local", "path": "/app/output/details" },
+    "logs":    { "type": "local", "path": "/app/output/logs" }
   }
 }

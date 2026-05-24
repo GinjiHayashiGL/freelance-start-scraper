@@ -1,8 +1,12 @@
-import re
+"""案件詳細ページのスクレイピング。JavaScript で DOM を一括取得して辞書に変換する。"""
+
+import logging
 import time
 import random
 
 from selenium import webdriver
+
+logger = logging.getLogger(__name__)
 
 
 def scrape_job_detail(
@@ -11,95 +15,110 @@ def scrape_job_detail(
     keyword: str,
     delay_range: tuple[float, float] = (2.0, 4.0),
 ) -> dict:
+    """案件詳細ページを取得し、DETAIL_FIELDS に対応した辞書を返す。
+
+    JS を 1 回実行して全フィールドを取得することで、複数の find_element 呼び出しを避ける。
+    取得した文字列はすべて _normalize() で空白を正規化する（CSV の行分割防止）。
+    """
     driver.get(url)
     time.sleep(random.uniform(*delay_range))
 
     data = driver.execute_script("""
-        const root = document.querySelector('#job-detail');
-        if (!root) return {};
-
-        const sectionH2s = Array.from(root.querySelectorAll('h2.section-title'));
-
-        function getSectionEls(title) {
-            const h2 = sectionH2s.find(h => h.textContent.trim() === title);
-            if (!h2) return [];
-            const next = sectionH2s[sectionH2s.indexOf(h2) + 1] || null;
-            const els = [];
-            let el = h2.nextElementSibling;
-            while (el && el !== next) { els.push(el); el = el.nextElementSibling; }
-            return els;
-        }
-
-        const titleEl = root.querySelector('h1.job-title');
-
-        const tags = Array.from(root.querySelectorAll('span.tag'))
-            .map(s => s.textContent.trim()).filter(Boolean);
-
-        const sal = root.querySelector('span.salary');
-        const salUnit = root.querySelector('span.salary-unit');
-        const salary = sal
-            ? sal.textContent.trim() + (salUnit ? salUnit.textContent.trim() : '')
+        // job-header: タイトル・単価
+        const header = document.querySelector('div.job-header');
+        const titleEl = header ? header.querySelector('h1.job-title') : null;
+        const salaryEl = header ? header.querySelector('span.salary') : null;
+        const salaryUnitEl = header ? header.querySelector('span.salary-unit') : null;
+        const title = titleEl ? titleEl.textContent : '';
+        const salary = salaryEl
+            ? salaryEl.textContent + (salaryUnitEl ? salaryUnitEl.textContent : '')
             : '';
 
-        const skills = getSectionEls('開発環境・言語').flatMap(el => {
-            if (el.className && el.className.includes('skill-logo')) {
-                const sp = el.querySelector('span');
-                return [(sp || el).textContent.trim()];
-            }
-            if (el.tagName === 'SPAN') return [el.textContent.trim()];
-            return [];
-        }).filter(Boolean);
+        // main-content: スキル・業務内容・必須/歓迎スキル・エージェントコメント
+        const main = document.querySelector('div.main-content');
 
-        const jobContent = getSectionEls('職務内容')
-            .filter(el => el.tagName === 'P')
-            .map(el => el.textContent.trim())
-            .join('\\n');
+        const skills = main
+            ? Array.from(main.querySelectorAll('div.tech-stack a.tech-item span'))
+                .map(s => s.textContent.trim()).filter(Boolean)
+            : [];
+
+        const descEl = main ? main.querySelector('div.description') : null;
+        const description = descEl ? descEl.textContent : '';
 
         const required = [], preferred = [];
-        let cur = null;
-        for (const el of getSectionEls('必須スキル・歓迎スキル')) {
-            if (el.tagName === 'H4') {
-                cur = el.textContent.includes('必須') ? 'req'
-                    : el.textContent.includes('歓迎') ? 'pref' : null;
-            } else if ((el.tagName === 'UL' || el.tagName === 'OL') && cur) {
-                const items = Array.from(el.querySelectorAll('li'))
+        if (main) {
+            for (const cat of main.querySelectorAll('div.skills-container div.skill-category')) {
+                const h4 = cat.querySelector('h4');
+                if (!h4) continue;
+                const items = Array.from(cat.querySelectorAll('ul.skill-list li'))
                     .map(li => li.textContent.trim()).filter(Boolean);
-                (cur === 'req' ? required : preferred).push(...items);
+                if (h4.textContent.includes('必須')) required.push(...items);
+                else if (h4.textContent.includes('歓迎')) preferred.push(...items);
             }
         }
 
-        const detailMap = {};
-        root.querySelectorAll('.detail-label').forEach(label => {
-            const val = label.nextElementSibling;
-            if (val && val.classList.contains('detail-value')) {
-                detailMap[label.textContent.trim()] = val.textContent.trim();
+        const agentCommentEl = main ? main.querySelector('div.agent-info div.agent-comment') : null;
+        const agentComment = agentCommentEl ? agentCommentEl.textContent : '';
+
+        // section: h2.section-title の見出しでセクションを特定
+        // 案件詳細・エージェント情報: detail-label/value ペアを収集
+        function getSectionDetails(sectionTitle) {
+            const map = {};
+            for (const section of document.querySelectorAll('div.section')) {
+                const h2 = section.querySelector('h2.section-title');
+                if (!h2 || h2.textContent.trim() !== sectionTitle) continue;
+                section.querySelectorAll('div.detail-label').forEach(label => {
+                    const val = label.nextElementSibling;
+                    if (val && val.classList.contains('detail-value')) {
+                        map[label.textContent.trim()] = val.textContent;
+                    }
+                });
+                break;
             }
-        });
+            return map;
+        }
 
-        return { titleEl: titleEl ? titleEl.textContent.trim() : '',
-                 tags, salary, skills, jobContent, required, preferred, detailMap };
+        // その他情報: div.description の本文を取得
+        function getSectionDescription(sectionTitle) {
+            for (const section of document.querySelectorAll('div.section')) {
+                const h2 = section.querySelector('h2.section-title');
+                if (!h2 || h2.textContent.trim() !== sectionTitle) continue;
+                const desc = section.querySelector('div.description');
+                return desc ? desc.textContent : '';
+            }
+            return '';
+        }
+
+        const jobDetails = getSectionDetails('案件詳細');
+        const agentDetails = getSectionDetails('エージェント情報');
+        const otherInfo = getSectionDescription('その他情報');
+
+        return { title, salary, skills, description, required, preferred,
+                 agentComment, jobDetails, agentDetails, otherInfo };
     """)
-
-    job_content: str = data.get("jobContent", "")
 
     return {
         "検索キーワード": keyword,
         "案件URL": url,
-        "案件タイトル": data.get("titleEl", ""),
-        "特徴タグ": "/".join(data.get("tags", [])),
-        "単価": data.get("salary", ""),
-        "使用技術": "/".join(data.get("skills", [])),
-        "職務内容": job_content,
-        "必須スキル": "/".join(data.get("required", [])),
-        "歓迎スキル": "/".join(data.get("preferred", [])),
-        "職種": data.get("detailMap", {}).get("職種", ""),
-        "契約形態": data.get("detailMap", {}).get("契約形態", ""),
-        "勤務地": data.get("detailMap", {}).get("勤務地・最寄り駅", ""),
-        "エージェント名": data.get("detailMap", {}).get("エージェント名", ""),
-        "稼働日数": _extract_working_days(job_content),
+        "案件タイトル": _normalize(data.get("title", "")),
+        "単価": _normalize(data.get("salary", "")),
+        "使用技術": "/".join(_normalize(s) for s in data.get("skills", [])),
+        "業務内容": _normalize(data.get("description", "")),
+        "必須スキル": "/".join(_normalize(s) for s in data.get("required", [])),
+        "歓迎スキル": "/".join(_normalize(s) for s in data.get("preferred", [])),
+        "エージェントコメント": _normalize(data.get("agentComment", "")),
+        "職種": _normalize(data.get("jobDetails", {}).get("職種", "")),
+        "契約期間": _normalize(data.get("jobDetails", {}).get("契約期間", "")),
+        "稼働時間": _normalize(data.get("jobDetails", {}).get("精算条件", "")),
+        "勤務地・最寄り駅": _normalize(data.get("jobDetails", {}).get("勤務地・最寄り駅", "")),
+        "エージェント名": _normalize(data.get("agentDetails", {}).get("エージェント名", "")),
+        "特徴": _normalize(data.get("agentDetails", {}).get("特徴", "")),
+        "支払いサイト": _normalize(data.get("agentDetails", {}).get("支払いサイト", "")),
+        "手数料": _normalize(data.get("agentDetails", {}).get("手数料", "")),
+        "その他情報": _normalize(data.get("otherInfo", "")),
     }
 
 
-def _extract_working_days(text: str) -> str:
-    match = re.search(r'週\d+(?:[〜～]\d+)?日(?:[（(][^）)]+[）)])?', text)
-    return match.group().strip() if match else ""
+def _normalize(s: str) -> str:
+    """連続する空白・改行を単一スペースに畳み込む。CSV 内での改行によるレコード分割を防ぐ。"""
+    return " ".join(s.split())

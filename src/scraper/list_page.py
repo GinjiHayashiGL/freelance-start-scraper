@@ -1,3 +1,6 @@
+"""案件一覧ページから詳細URLを収集する。ページネーション・リダイレクト検出・URL正規化を含む。"""
+
+import logging
 import re
 import time
 import random
@@ -6,6 +9,8 @@ from urllib.parse import urlparse, urlunparse
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+
+logger = logging.getLogger(__name__)
 
 
 def get_all_urls_for_keyword(
@@ -27,7 +32,7 @@ def get_all_urls_for_keyword(
     # ページ1にアクセスしてスキルURLへのリダイレクトを検出する。
     # リダイレクトがあれば skill パラメータ＋prefecture で再アクセスする。
     initial_url = f"{base_url}/jobs?keyword={keyword}&page=1&prefecture={prefecture}"
-    print(f"  ページ 1 を取得中: {initial_url}")
+    logger.info(f"[{keyword}] p=1 GET {initial_url}")
     driver.get(initial_url)
     time.sleep(random.uniform(*delay_range))
 
@@ -37,15 +42,15 @@ def get_all_urls_for_keyword(
     total_pages = max_pages if max_pages > 0 else detected_max
 
     if detected_max == 0:
-        print("  案件が見つかりませんでした（ページネーションなし・リンクなし）")
+        logger.info(f"[{keyword}] no jobs found")
         return []
 
-    print(f"  検出ページ数: {detected_max}、取得対象: {total_pages} ページ")
+    logger.info(f"[{keyword}] pages={detected_max} target={total_pages}")
 
     for page in range(1, total_pages + 1):
         if page > 1:
             page_url = build_page_url(page)
-            print(f"  ページ {page} を取得中: {page_url}")
+            logger.info(f"[{keyword}] p={page} GET {page_url}")
             driver.get(page_url)
             time.sleep(random.uniform(*delay_range))
 
@@ -69,7 +74,7 @@ def get_all_urls_for_keyword(
                 new_urls.append(normalized)
 
         urls.extend(new_urls)
-        print(f"    → {len(new_urls)} 件取得（累計 {len(urls)} 件）")
+        logger.info(f"[{keyword}] p={page} new={len(new_urls)} total={len(urls)}")
 
     return urls
 
@@ -90,7 +95,7 @@ def _resolve_page_url_builder(
     skill_match = re.search(r"/jobs/skill-(\d+)", driver.current_url)
     if skill_match:
         skill_id = skill_match.group(1)
-        print(f"  スキルURLへのリダイレクトを検出 (skill={skill_id})、prefecture付きで再アクセス")
+        logger.info(f"[{keyword}] redirect skill={skill_id}")
         corrected_url = f"{base_url}/jobs?skill={skill_id}&page=1&prefecture={prefecture}"
         driver.get(corrected_url)
         time.sleep(random.uniform(*delay_range))
