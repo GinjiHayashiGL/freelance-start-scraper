@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project-specific: scraper output data (do not commit scraped results)
+output/urls/latest.csv
+output/urls/archive/
+output/details/latest.csv
+output/details/archive/
+output/logs/
+output/debug/
