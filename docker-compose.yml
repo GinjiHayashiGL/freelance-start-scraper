@@ -1,0 +1,26 @@
+services:
+  scraper:
+    build: .
+    container_name: scraper
+    depends_on:
+      selenium:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - ./input:/app/input
+      - ./output:/app/output
+
+  selenium:
+    image: selenium/standalone-chrome:latest
+    container_name: selenium
+    ports:
+      - "4444:4444"
+      - "7900:7900"
+    shm_size: "2gb"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4444/wd/hub/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
