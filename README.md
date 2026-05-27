@@ -7,7 +7,7 @@
 ```text
 freelance-start-scraper/
 ├── src/
-│   ├── main.py               # エントリポイント（--phase で実行フェーズを選択）
+│   ├── main.py               # エントリポイント（--phase / --retry-file で動作を選択）
 │   ├── scraper/
 │   │   ├── driver.py         # WebDriver 生成（ボット検知回避設定込み）
 │   │   ├── list_page.py      # 案件一覧ページから詳細URLを収集
@@ -30,9 +30,11 @@ freelance-start-scraper/
 │   │   └── archive/          # 日次差分 YYYYMMDD.csv
 │   ├── details/
 │   │   ├── latest.csv        # 全期間の累積 詳細一覧
-│   │   └── archive/          # 日次差分 YYYYMMDD.csv
+│   │   ├── archive/          # 日次差分 YYYYMMDD.csv
+│   │   └── failed/           # 取得失敗 URL（YYYYMMDD_HHMMSS.csv）
 │   ├── logs/                 # 実行ログ（scraper_YYYYMMDD_HHMMSS.log）
 │   └── debug/                # デバッグスクリプトの出力
+├── CLAUDE.md                 # コーディングエージェント向け技術ガイド
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
@@ -54,6 +56,8 @@ freelance-start-scraper/
 | --- | --- | --- |
 | `scraper` | python:3.13-slim (Dockerfile) | スクレイピング処理 |
 | `selenium` | selenium/standalone-chrome:latest | Chrome WebDriver サーバ |
+
+---
 
 ## セットアップと実行
 
@@ -114,8 +118,36 @@ docker exec -it scraper bash
 | `python src/main.py --phase urls` | URL 収集のみ |
 | `python src/main.py --phase details` | 詳細取得のみ（urls/latest.csv が必要） |
 | `python src/main.py --phase all` | URL 収集 → 詳細取得を連続実行 |
+| `python src/main.py --retry-file FILENAME` | 失敗 URL のみリトライ（詳細取得のみ実行） |
 
-### 5. 出力ファイル
+### 5. 失敗時のリトライ
+
+詳細取得フェーズは 1 件のスクレイピングに失敗しても **スキップして残りを継続** する。
+失敗した URL は自動的に以下のファイルへ保存され、パスと再実行コマンドがログに出力される。
+
+```
+output/details/failed/YYYYMMDD_HHMMSS.csv
+```
+
+**ログ出力例：**
+
+```
+[WARNING] [details] 3 URLs failed → /app/output/details/failed/20240101_120000.csv
+          リトライ: python src/main.py --retry-file failed/20240101_120000.csv
+```
+
+**リトライ実行：**
+
+```bash
+# ログに表示された相対パスをそのまま渡す
+python src/main.py --retry-file failed/20240101_120000.csv
+```
+
+> `--retry-file` を指定した場合、`--phase` の指定は無視されて詳細取得のみ実行される。
+> また、途中クラッシュ後の再実行時は **10 件ごとの自動途中保存** により保存済み URL がスキップされ、
+> 未取得分から自動的に再開する（同じ `--phase details` コマンドで再実行可能）。
+
+### 6. 出力ファイル
 
 実行のたびに差分のみを追加する累積方式を採用している。
 
@@ -125,19 +157,22 @@ docker exec -it scraper bash
 | `output/urls/archive/YYYYMMDD.csv` | その日に新たに発見した URL の差分 |
 | `output/details/latest.csv` | 全期間の累積 詳細一覧 |
 | `output/details/archive/YYYYMMDD.csv` | その日に新たに取得した詳細の差分 |
+| `output/details/failed/YYYYMMDD_HHMMSS.csv` | 詳細取得に失敗した URL の一覧 |
 | `output/logs/scraper_YYYYMMDD_HHMMSS.log` | 実行ログ（JST） |
 
-### 6. ブラウザ動作の確認（noVNC）
+### 7. ブラウザ動作の確認（noVNC）
 
 ```text
 http://localhost:7900/?autoconnect=1&resize=scale&password=secret
 ```
 
-### 7. コンテナの停止
+### 8. コンテナの停止
 
 ```bash
 docker compose down
 ```
+
+---
 
 ## 環境変数（.env）
 
@@ -147,6 +182,37 @@ docker compose down
 | `SELENIUM_PORT` | `4444` | Selenium サーバのポート番号 |
 
 スクレイピング設定（対象URL・キーワード等）は `input/config.json` で管理する。
+
+---
+
+## ストレージ拡張（S3 対応）
+
+`src/utils/storage.py` の `BaseStorage` を継承することで S3 等への切り替えが可能。
+URL・詳細・ログ・失敗ファイルのすべての出力が `BaseStorage` 経由で書き込まれるため、
+実装を差し替えるだけでストレージ先をまるごと変更できる。
+
+### 切り替え手順
+
+1. `BaseStorage` を継承した `S3Storage` クラスを実装する（`src/utils/storage.py` 推奨）
+2. `create_storage()` に以下の分岐を追加する
+   ```python
+   elif cfg.type == "s3":
+       return S3Storage(cfg.path)  # cfg.path = "s3://bucket/prefix"
+   ```
+3. `config.json` の `storage.*.type` を `"s3"` に変更する
+   ```json
+   {
+     "storage": {
+       "urls":    { "type": "s3", "path": "s3://my-bucket/scraper/urls" },
+       "details": { "type": "s3", "path": "s3://my-bucket/scraper/details" },
+       "logs":    { "type": "s3", "path": "s3://my-bucket/scraper/logs" }
+     }
+   }
+   ```
+
+実装上の注意点は `CLAUDE.md` の「ストレージ拡張ガイド」を参照。
+
+---
 
 ## デバッグスクリプト
 
@@ -160,6 +226,8 @@ docker compose down
 
 対象 URL は環境変数 `DEBUG_URL` で上書き可能。
 
+---
+
 ## ボット検知回避
 
 `src/scraper/driver.py` で以下の対策を実施している。
@@ -168,11 +236,3 @@ docker compose down
 - ウィンドウサイズを実ブラウザと同等（1920×1080）に設定
 - `--disable-blink-features=AutomationControlled` で自動化フラグを無効化
 - `navigator.webdriver` を `undefined` に上書き（CDP 経由）
-
-## ストレージ拡張について
-
-`src/utils/storage.py` の `BaseStorage` を継承することで、S3 等の別ストレージへの切り替えが可能。
-
-1. `BaseStorage` を継承したクラスを実装する
-2. `create_storage()` に `elif cfg.type == "s3":` の分岐を追加する
-3. `config.json` の `storage.*.type` を `"s3"` に変更する
